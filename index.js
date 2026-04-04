@@ -2,52 +2,58 @@ const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 const moment = require('moment-timezone');
 
-// --- 基础配置 ---
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROUP_ID = process.env.GROUP_ID; 
-const TIMEZONE = 'Asia/Yangon'; // 缅甸时区
-
-// --- 方案 A：手动设置需要考核的人员名单 ---
-// 把你需要艾特的人对应的 ID 和名字填在这里
-const targetUsers = [
-  { id: 6863315227, name: "zee" }, // 替换成实际的 ID 和名字
-  { id: 6635424294, name: "小九" },
-  { id: 7976655123, name: "阿豪" },
-  { id: 7951298720, name: "阿星" },
-  { id: 2018656742, name: "猴子" },
-  { id: 5681335747, name: "GuBa" },
-  { id: 2094656277, name: "Pablo" }
-
-];
+const TIMEZONE = 'Asia/Yangon';
 
 const bot = new Telegraf(BOT_TOKEN);
+
+// 核心存储
+let allMembers = new Map(); // 记录群里所有发言过的普通成员 {id: name}
 let activeUsers = new Set(); // 记录今天谁发了图
 
-// 1. 监听：记录谁发了图片或转发了消息
-bot.on(['photo', 'forward_date'], (ctx) => {
-  if (ctx.chat.id.toString() === GROUP_ID.toString()) {
-    activeUsers.add(ctx.from.id);
-    console.log(`[已记录] ${ctx.from.first_name} 完成了任务`);
+// 1. 自动收集逻辑：监听群内所有消息
+bot.on('message', async (ctx, next) => {
+  if (ctx.chat.id.toString() !== GROUP_ID.toString()) return next();
+
+  const userId = ctx.from.id;
+  const firstName = ctx.from.first_name;
+
+  // 检查是否是图片或转发
+  if (ctx.message.photo || ctx.message.forward_date) {
+    activeUsers.add(userId);
+    console.log(`[已记录发图] ${firstName}`);
   }
+
+  // 动态维护“待考核名单”：如果是新面孔，先查他是不是管理员
+  if (!allMembers.has(userId)) {
+    try {
+      const memberStatus = await ctx.getChatMember(userId);
+      // 只有不是管理员和群主的人，才加入考核名单
+      if (memberStatus.status === 'member') {
+        allMembers.set(userId, firstName);
+        console.log(`[新成员加入考核] ${firstName}`);
+      }
+    } catch (e) {
+      console.error("查询成员权限失败", e);
+    }
+  }
+  return next();
 });
 
 // 2. 定时任务：每天中午 12:00
 cron.schedule('0 12 * * *', async () => {
-  console.log('正在执行中午 12:00 核查任务...');
-  
   try {
     const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
     let mentions = "";
 
-    // 遍历名单，检查谁没在 activeUsers 里
-    targetUsers.forEach(user => {
-      if (!activeUsers.has(user.id)) {
-        // 使用 Markdown 格式强制艾特（即使用户没设置 username 也能艾特到）
-        mentions += `[${user.name}](tg://user?id=${user.id}) `;
+    // 遍历所有记录过的普通成员
+    for (let [id, name] of allMembers) {
+      if (!activeUsers.has(id)) {
+        mentions += `[${name}](tg://user?id=${id}) `;
       }
-    });
+    }
 
-    // 如果有人没发图
     if (mentions.trim().length > 0) {
       const text = 
         `📢 Daily Task Reminders\n\n` +
@@ -56,26 +62,20 @@ cron.schedule('0 12 * * *', async () => {
         `🌅 Today： No new users sent messages`;
       
       await bot.telegram.sendMessage(GROUP_ID, text, { parse_mode: 'Markdown' });
-      console.log('已发送提醒');
-    } else {
-      console.log('太棒了，所有人今天都发图了！');
     }
 
-    // 重置，迎接新的一天
+    // 每天重置发图状态，但保留 allMembers 名单，这样第二天不用重新说话也能检测
     activeUsers.clear();
+    console.log(`[任务完成] ${today} 12:00`);
 
   } catch (error) {
-    console.error('定时任务运行出错:', error);
+    console.error('定时任务出错:', error);
   }
 }, {
   timezone: TIMEZONE
 });
 
-// 启动机器人
-bot.launch()
-  .then(() => console.log('✅ 机器人已启动（手动名单模式）'))
-  .catch(err => console.error('❌ 启动失败:', err));
+bot.launch().then(() => console.log('✅ 全自动过滤机器人已启动'));
 
-// 优雅退出
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
