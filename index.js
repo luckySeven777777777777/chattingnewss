@@ -49,6 +49,24 @@ cron.schedule('0 12 * * *', async () => {
 
     // 遍历所有记录过的普通成员
     for (let [id, name] of allMembers) {
+      // --- 新增：实时检查成员是否还在群里 ---
+      try {
+        const chatMember = await bot.telegram.getChatMember(GROUP_ID, id);
+        
+        // 如果状态变成 left（退群）或 kicked（被踢），从名单中永久删除
+        if (chatMember.status === 'left' || chatMember.status === 'kicked') {
+          allMembers.delete(id);
+          console.log(`[清理退群成员] ${name}`);
+          continue; // 跳过此人，不加入本次艾特
+        }
+      } catch (e) {
+        // 如果查不到该用户（可能注销或机器人被封锁），也进行清理
+        allMembers.delete(id);
+        continue;
+      }
+      // ------------------------------------
+
+      // 如果还在群里，且今天没发图，则加入艾特名单
       if (!activeUsers.has(id)) {
         mentions += `[${name}](tg://user?id=${id}) `;
       }
@@ -64,7 +82,6 @@ cron.schedule('0 12 * * *', async () => {
       await bot.telegram.sendMessage(GROUP_ID, text, { parse_mode: 'Markdown' });
     }
 
-    // 每天重置发图状态，但保留 allMembers 名单，这样第二天不用重新说话也能检测
     activeUsers.clear();
     console.log(`[任务完成] ${today} 12:00`);
 
