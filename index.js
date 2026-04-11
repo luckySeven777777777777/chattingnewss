@@ -1,37 +1,60 @@
 const { Telegraf } = require('telegraf');
 const cron = require('node-cron');
 const moment = require('moment-timezone');
+const fs = require('fs'); // 引入文件系统模块
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROUP_ID = process.env.GROUP_ID; 
 const TIMEZONE = 'Asia/Yangon';
+const DATA_FILE = './members.json'; // 数据保存路径
 
 const bot = new Telegraf(BOT_TOKEN);
 
-// 核心存储
-let allMembers = new Map(); // 记录群里所有发言过的普通成员 {id: name}
-let activeUsers = new Set(); // 记录今天谁发了图
+// --- 数据持久化逻辑 ---
 
-// 1. 自动收集逻辑：监听群内所有消息
+// 初始化加载数据
+let allMembers = new Map();
+if (fs.existsSync(DATA_FILE)) {
+  try {
+    const data = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
+    allMembers = new Map(data);
+    console.log(`[系统] 已从文件加载 ${allMembers.size} 名成员`);
+  } catch (e) {
+    console.error("加载成员数据失败", e);
+  }
+}
+
+// 保存数据到文件的函数
+const saveMembers = () => {
+  try {
+    const data = JSON.stringify(Array.from(allMembers.entries()));
+    fs.writeFileSync(DATA_FILE, data, 'utf8');
+  } catch (e) {
+    console.error("保存数据失败", e);
+  }
+};
+
+// 记录今天谁发了图（这个可以留在内存，因为每天定时任务后会清空）
+let activeUsers = new Set(); 
+
+// 1. 自动收集逻辑
 bot.on('message', async (ctx, next) => {
   if (ctx.chat.id.toString() !== GROUP_ID.toString()) return next();
 
   const userId = ctx.from.id;
   const firstName = ctx.from.first_name;
 
-  // 检查是否是图片或转发
   if (ctx.message.photo || ctx.message.forward_date) {
     activeUsers.add(userId);
     console.log(`[已记录发图] ${firstName}`);
   }
 
-  // 动态维护“待考核名单”：如果是新面孔，先查他是不是管理员
   if (!allMembers.has(userId)) {
     try {
       const memberStatus = await ctx.getChatMember(userId);
-      // 只有不是管理员和群主的人，才加入考核名单
       if (memberStatus.status === 'member') {
         allMembers.set(userId, firstName);
+        saveMembers(); // 存入文件
         console.log(`[新成员加入考核] ${firstName}`);
       }
     } catch (e) {
@@ -41,36 +64,36 @@ bot.on('message', async (ctx, next) => {
   return next();
 });
 
-// 2. 定时任务：每天中午 12:00
+// 2. 定时任务
 cron.schedule('0 12 * * *', async () => {
   try {
     const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
     let mentions = "";
+    let changed = false;
 
-    // 遍历所有记录过的普通成员
     for (let [id, name] of allMembers) {
-      // --- 新增：实时检查成员是否还在群里 ---
       try {
         const chatMember = await bot.telegram.getChatMember(GROUP_ID, id);
         
-        // 如果状态变成 left（退群）或 kicked（被踢），从名单中永久删除
         if (chatMember.status === 'left' || chatMember.status === 'kicked') {
           allMembers.delete(id);
+          changed = true;
           console.log(`[清理退群成员] ${name}`);
-          continue; // 跳过此人，不加入本次艾特
+          continue;
         }
       } catch (e) {
-        // 如果查不到该用户（可能注销或机器人被封锁），也进行清理
         allMembers.delete(id);
+        changed = true;
         continue;
       }
-      // ------------------------------------
 
-      // 如果还在群里，且今天没发图，则加入艾特名单
       if (!activeUsers.has(id)) {
         mentions += `[${name}](tg://user?id=${id}) `;
       }
     }
+
+    // 如果清理了成员，更新文件
+    if (changed) saveMembers();
 
     if (mentions.trim().length > 0) {
       const text = 
@@ -92,7 +115,7 @@ cron.schedule('0 12 * * *', async () => {
   timezone: TIMEZONE
 });
 
-bot.launch().then(() => console.log('✅ 全自动过滤机器人已启动'));
+bot.launch().then(() => console.log('✅ 永久记录版机器人已启动'));
 
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
