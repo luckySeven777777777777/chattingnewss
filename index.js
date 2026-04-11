@@ -18,15 +18,14 @@ const registeredUsers = [
   6615925197, // 用户A的ID
   8170698622,
   8179048089,
-    6863315227,
+  6863315227,
   5681335747,
-    2094656277,
+  2094656277,
   7794920274,
   2018656742,
   6635424294,
   8165185855,
   6557319746,
-
 ];
 
 let activeUsers = new Set(); // 每天重置：记录今天谁发了图
@@ -80,7 +79,7 @@ cron.schedule('0 12 * * *', async () => {
         `📢 Daily Task Reminders\n\n` +
         `👤Member：${mentions.trim()}\n` +
         `📅 Date：${today}\n` +
-        `🌅 今日未报备人员`;
+        `🌅 No new users sent messages`;
       
       await bot.telegram.sendMessage(GROUP_ID, text, { parse_mode: 'Markdown' });
     }
