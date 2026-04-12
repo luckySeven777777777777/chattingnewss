@@ -18,14 +18,15 @@ const registeredUsers = [
   6615925197, // 用户A的ID
   8170698622,
   8179048089,
-  6863315227,
+    6863315227,
   5681335747,
-  2094656277,
+    2094656277,
   7794920274,
   2018656742,
   6635424294,
   8165185855,
   6557319746,
+
 ];
 
 let activeUsers = new Set(); // 每天重置：记录今天谁发了图
@@ -53,21 +54,16 @@ cron.schedule('0 12 * * *', async () => {
     let mentions = "";
 
     // 直接遍历你手动写好的注册名单
-    for (let id of registeredUsers) {
+for (let id of registeredUsers) {
       try {
-        // 实时检查用户是否还在群里
         const chatMember = await bot.telegram.getChatMember(GROUP_ID, id);
         
-        // 如果用户退群或被踢，跳过（不艾特）
-        if (chatMember.status === 'left' || chatMember.status === 'kicked') {
-          console.log(`[跳过] 用户 ${id} 已不在群内`);
-          continue;
-        }
+        if (chatMember.status === 'left' || chatMember.status === 'kicked') continue;
 
-        // 如果在注册名单里，但今天没发图，则加入艾特名单
         if (!activeUsers.has(id)) {
-          // 注意：因为是手动输入ID，机器人可能不知道名字，这里用ID链接代替
-          mentions += `[用户${id}](tg://user?id=${id}) `;
+          // 这里是关键：直接从 Telegram 实时获取该用户的昵称 (first_name)
+          const name = chatMember.user.first_name || `用户${id}`; 
+          mentions += `[${name}](tg://user?id=${id}) `; 
         }
       } catch (e) {
         console.error(`无法获取用户 ${id} 的状态`, e);
@@ -79,11 +75,10 @@ cron.schedule('0 12 * * *', async () => {
         `📢 Daily Task Reminders\n\n` +
         `👤Member：${mentions.trim()}\n` +
         `📅 Date：${today}\n` +
-        `🌅 No new users sent messages`;
+        `🌅 Today： No new users sent messages`; // 这里也帮你改好了
       
       await bot.telegram.sendMessage(GROUP_ID, text, { parse_mode: 'Markdown' });
     }
-
     activeUsers.clear(); // 清空今日发图记录
     console.log(`[任务完成] ${today}`);
 
