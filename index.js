@@ -45,27 +45,35 @@ bot.on('message', async (ctx, next) => {
 cron.schedule('0 12 * * *', async () => {
   try {
     const today = moment().tz(TIMEZONE).format('YYYY-MM-DD');
-    let mentionList = [];
+    let mentionList = []; // 存储 {name, id} 对象
+    let entities = []; // 存储实体信息
+    let currentOffset = 0;
 
-    // 遍历手动写好的注册名单
+    // 构建初始消息文本
+    let text = `📢 Daily Task Reminders\n\n👤Member：`;
+    currentOffset = text.length;
+
     for (let id of registeredUsers) {
       try {
         const chatMember = await bot.telegram.getChatMember(GROUP_ID, id);
-        
-        // 如果退群、被踢，直接跳过
         if (chatMember.status === 'left' || chatMember.status === 'kicked') continue;
-
-        // 🌟【新增核心逻辑】如果他是管理员或群主，则不需要催交任务，直接跳过
-        if (chatMember.status === 'administrator' || chatMember.status === 'creator') {
-          console.log(`[跳过管理员] ID: ${id} 身份为 ${chatMember.status}，无需提醒`);
-          continue;
-        }
-
-        // 如果不是管理员，并且今天没有发图
+        if (chatMember.status === 'administrator' || chatMember.status === 'creator') continue;
         if (!activeUsers.has(id)) {
-          const name = chatMember.user.first_name || `用户${id}`; 
-          // 🌟【修改】只存纯文本名字，不再拼装 Markdown 链接
-          mentionList.push(name); 
+          const name = chatMember.user.first_name || `用户${id}`;
+          
+          // 构建 "@name" 的字符串
+          const mentionStr = `@${name}`;
+          
+          // 记录实体：类型为 mention，从当前位置开始，长度为名字长度
+          entities.push({
+            type: 'text_mention',
+            offset: currentOffset,
+            length: mentionStr.length,
+            user: { id: id, first_name: name, type: 'private' }
+          });
+
+          mentionList.push(mentionStr);
+          currentOffset += mentionStr.length + 1; // +1 是为了逗号
         }
       } catch (e) {
         console.error(`无法获取用户 ${id} 的状态`, e);
@@ -73,22 +81,17 @@ cron.schedule('0 12 * * *', async () => {
     }
 
     if (mentionList.length > 0) {
-      // 🌟【修改】用 "，" 把所有名字连起来
       const mentionsText = mentionList.join('，');
+      text += `${mentionsText}\n📅 Date：${today}\n🌅 Today： No new users sent messages-1point`;
 
-      const text = 
-        `📢 Daily Task Reminders\n\n` +
-        `👤Member：${mentionsText}\n` +
-        `📅 Date：${today}\n` +
-        `🌅 Today： No new users sent messages-1point`; 
-      
-      // 🌟【修改】因为不带任何链接了，去掉 parse_mode，防止特殊符号引发 Markdown 报错
-      await bot.telegram.sendMessage(GROUP_ID, text);
+      // 使用 entities 发送，不要设置 parse_mode
+      await bot.telegram.sendMessage(GROUP_ID, text, {
+        entities: entities
+      });
     }
 
-    activeUsers.clear(); // 清空今日发图记录
+    activeUsers.clear();
     console.log(`[任务完成] ${today}`);
-
   } catch (error) {
     console.error('定时任务出错:', error);
   }
